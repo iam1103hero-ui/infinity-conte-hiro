@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Infinite Storyboard - 試作</title>
+<style>
+:root{color-scheme:light;--bg:#f3f4f6;--panel:#fff;--line:#d1d5db;--ink:#111827;--muted:#6b7280;--accent:#2563eb}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+header{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line);padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:16px;margin:0 auto 0 0}
+button{font:inherit;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:8px 11px;cursor:pointer;color:var(--ink)}
+button.primary{background:var(--accent);border-color:var(--accent);color:white}
+button.danger{color:#b91c1c}
+main{max-width:900px;margin:0 auto;padding:14px}
+.notice{font-size:13px;color:var(--muted);line-height:1.5;margin:0 0 12px}
+#shots{display:flex;flex-direction:column;gap:14px}
+.shot{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;box-shadow:0 1px 2px #0000000a}
+.shothead{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.cutno{font-weight:700;font-size:13px;min-width:74px}
+.shothead button{padding:5px 8px;font-size:13px}
+.spacer{flex:1}
+.drawarea{position:relative;width:100%;aspect-ratio:16/9;background:#fff;border:1px solid #9ca3af;overflow:hidden;touch-action:none;border-radius:3px}
+.drawarea canvas{display:block;width:100%;height:100%;touch-action:none}
+.fields{display:grid;grid-template-columns:100px 1fr;gap:8px;margin-top:8px}
+.fields label{font-size:12px;color:var(--muted);align-self:center}
+.fields input,.fields textarea{font:inherit;font-size:14px;border:1px solid var(--line);border-radius:7px;padding:7px;width:100%;min-width:0;background:#fff}
+.fields textarea{resize:vertical;min-height:42px}
+.insertrow{display:flex;justify-content:center;margin-top:10px}
+.addbottom{display:flex;justify-content:center;padding:18px}
+footer{font-size:12px;color:var(--muted);text-align:center;padding:10px 14px 28px}
+@media(max-width:520px){main{padding:8px}.shot{padding:8px}.fields{grid-template-columns:70px 1fr}header{gap:6px}header button{font-size:13px;padding:7px 8px}}
+@media print{
+ body{background:white}header,.notice,.shothead button,.insertrow,.addbottom,footer{display:none!important}
+ main{padding:0;max-width:none}#shots{gap:8mm}.shot{box-shadow:none;border:1px solid #777;break-inside:avoid;padding:5mm}
+ .drawarea{border:1px solid #555}.fields input,.fields textarea{border:0;padding:0}
+ .shothead{margin-bottom:2mm}.fields{margin-top:2mm}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Infinite Storyboard <span style="font-weight:400;color:#6b7280">試作</span></h1>
+  <button id="addTop" class="primary">＋ カット追加</button>
+  <button id="saveBtn">保存</button>
+  <button id="pngBtn">全体PNG</button>
+  <button id="pdfBtn">PDF / 印刷</button>
+  <button id="clearBtn" class="danger">新規作成</button>
+</header>
+<main>
+  <p class="notice">試作版：各コマに直接描画でき、途中への挿入・削除・並べ替え・自動採番ができます。データはこのブラウザ内に保存されます。iPhoneではSafariで開き、共有メニューから「ホーム画面に追加」できます。大切な作業のバックアップとして、定期的に「全体PNG」またはブラウザの保存機能を利用してください。</p>
+  <div id="shots"></div>
+  <div class="addbottom"><button id="addBottom" class="primary">＋ 最後にカットを追加</button></div>
+</main>
+<footer>最初の動作確認用プロトタイプ。クラウド同期・本格的なペン補正・専用PDFレイアウトは今後の開発項目です。</footer>
+<script>
+const KEY='infiniteStoryboardPrototype_v1';
+let shots=[];
+const $=s=>document.querySelector(s);
+function uid(){return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
+function blankShot(){return {id:uid(),duration:'',action:'',notes:'',strokes:[]}}
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function save(silent=false){
+ try{localStorage.setItem(KEY,JSON.stringify(shots));if(!silent) alert('このブラウザに保存したよ。別端末とはまだ同期されません。')}
+ catch(e){alert('保存できませんでした。データ量が多い可能性があります。')}
+}
+function load(){
+ try{const d=JSON.parse(localStorage.getItem(KEY)||'null');if(Array.isArray(d)&&d.length)shots=d}
+ catch(e){}
+ if(!shots.length)shots=[blankShot(),blankShot(),blankShot()];
+ render();
+}
+function render(){
+ const root=$('#shots');root.innerHTML='';
+ shots.forEach((s,i)=>{
+  const card=document.createElement('section');card.className='shot';card.dataset.id=s.id;
+  card.innerHTML=`<div class="shothead"><span class="cutno">CUT ${String(i+1).padStart(3,'0')}</span><span class="spacer"></span><button data-act="before">↑ 前に挿入</button><button data-act="after">↓ 後に挿入</button><button data-act="up">上へ</button><button data-act="down">下へ</button><button data-act="delete" class="danger">削除</button></div>
+  <div class="drawarea"><canvas aria-label="CUT ${i+1} drawing canvas"></canvas></div>
+  <div class="fields"><label>尺（秒）</label><input data-field="duration" type="text" inputmode="decimal" placeholder="例：3" value="${escapeHtml(s.duration)}">
+  <label>アクション</label><textarea data-field="action" placeholder="画面内で何が起きる？">${escapeHtml(s.action)}</textarea>
+  <label>演出メモ</label><textarea data-field="notes" placeholder="カメラ・音・セリフなど">${escapeHtml(s.notes)}</textarea></div>`;
+  root.appendChild(card);
+  const canvas=card.querySelector('canvas');setupCanvas(canvas,s);
+  card.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',()=>act(s.id,b.dataset.act)));
+  card.querySelectorAll('[data-field]').forEach(el=>el.addEventListener('input',()=>{s[el.dataset.field]=el.value;save(true)}));
+ });
+}
+function setupCanvas(canvas,shot){
+ const ctx=canvas.getContext('2d');let drawing=false,last=null,activeStroke=null;
+ function resize(){
+  const r=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
+  const old=document.createElement('canvas');old.width=canvas.width;old.height=canvas.height;old.getContext('2d').drawImage(canvas,0,0);
+  canvas.width=Math.max(1,Math.round(r.width*dpr));canvas.height=Math.max(1,Math.round(r.height*dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,r.width,r.height);
+  if(old.width&&old.height)ctx.drawImage(old,0,0,old.width,old.height,0,0,r.width,r.height);
+  redraw();
+ }
+ function redraw(){
+  const r=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,r.width,r.height);ctx.fillStyle='#fff';ctx.fillRect(0,0,r.width,r.height);
+  for(const stroke of shot.strokes){
+   if(stroke.points.length<1)continue;
+   ctx.beginPath();ctx.strokeStyle=stroke.color||'#111';ctx.lineWidth=stroke.width||2;ctx.lineCap='round';ctx.lineJoin='round';
+   ctx.moveTo(stroke.points[0][0]*r.width,stroke.points[0][1]*r.height);
+   for(let k=1;k<stroke.points.length;k++)ctx.lineTo(stroke.points[k][0]*r.width,stroke.points[k][1]*r.height);
+   if(stroke.points.length===1)ctx.lineTo(stroke.points[0][0]*r.width+.01,stroke.points[0][1]*r.height+.01);
+   ctx.stroke();
+  }
+ }
+ function point(e){const r=canvas.getBoundingClientRect();return [(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]}
+ canvas.addEventListener('pointerdown',e=>{
+  if(e.pointerType==='mouse'&&e.button!==0)return;
+  e.preventDefault();canvas.setPointerCapture(e.pointerId);drawing=true;last=point(e);
+  activeStroke={color:'#111',width:e.pointerType==='pen'?Math.max(1.3,Math.min(3.2,(e.pressure||.5)*4)):2,points:[last]};shot.strokes.push(activeStroke);redraw();
+ });
+ canvas.addEventListener('pointermove',e=>{
+  if(!drawing||!activeStroke)return;e.preventDefault();const p=point(e);activeStroke.points.push(p);last=p;redraw();
+ });
+ function end(){if(drawing){drawing=false;activeStroke=null;save(true)}}
+ canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);
+ if('ResizeObserver' in window){new ResizeObserver(()=>{const strokes=shot.strokes;redraw()}).observe(canvas)}
+ window.addEventListener('resize',redraw);
+ redraw();
+}
+function act(id,action){
+ const i=shots.findIndex(s=>s.id===id);if(i<0)return;
+ if(action==='before')shots.splice(i,0,blankShot());
+ if(action==='after')shots.splice(i+1,0,blankShot());
+ if(action==='up'&&i>0)[shots[i-1],shots[i]]=[shots[i],shots[i-1]];
+ if(action==='down'&&i<shots.length-1)[shots[i+1],shots[i]]=[shots[i],shots[i+1]];
+ if(action==='delete'){if(!confirm(`CUT ${String(i+1).padStart(3,'0')} を削除する？`))return;shots.splice(i,1);if(!shots.length)shots.push(blankShot())}
+ render();save(true);
+}
+function add(){shots.push(blankShot());render();save(true);window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
+$('#addTop').onclick=()=>{shots.unshift(blankShot());render();save(true);window.scrollTo({top:0,behavior:'smooth'})};
+$('#addBottom').onclick=add;
+$('#saveBtn').onclick=()=>save(false);
+$('#clearBtn').onclick=()=>{if(confirm('現在の絵コンテを消して新規作成する？ 先にPNGなどでバックアップしてね。')){shots=[blankShot(),blankShot(),blankShot()];save(true);render();window.scrollTo(0,0)}};
+$('#pdfBtn').onclick=()=>window.print();
+$('#pngBtn').onclick=async()=>{
+ const cards=[...document.querySelectorAll('.shot')];
+ const scale=1,cardW=900,cardH=600,margin=24,gap=20;
+ const canvas=document.createElement('canvas');canvas.width=cardW+margin*2;canvas.height=cards.length*(cardH+gap)+margin*2;
+ const c=canvas.getContext('2d');c.fillStyle='#f3f4f6';c.fillRect(0,0,canvas.width,canvas.height);
+ for(let i=0;i<cards.length;i++){
+  const card=cards[i],y=margin+i*(cardH+gap);c.fillStyle='#fff';c.strokeStyle='#9ca3af';c.lineWidth=1;c.fillRect(margin,y,cardW,cardH);c.strokeRect(margin,y,cardW,cardH);
+  c.fillStyle='#111827';c.font='bold 18px sans-serif';c.fillText('CUT '+String(i+1).padStart(3,'0'),margin+12,y+28);
+  const source=card.querySelector('canvas');c.drawImage(source,margin+12,y+42,cardW-24,Math.round((cardW-24)*9/16));
+  const inputs=card.querySelectorAll('[data-field]');c.font='14px sans-serif';c.fillStyle='#374151';
+  c.fillText('尺：'+(inputs[0].value||'—')+' 秒',margin+12,y+cardH-75);
+  const action=(inputs[1].value||'').replace(/\n/g,' ').slice(0,80),notes=(inputs[2].value||'').replace(/\n/g,' ').slice(0,80);
+  c.fillText('アクション：'+action,margin+12,y+cardH-48);
+  c.fillText('演出メモ：'+notes,margin+12,y+cardH-23);
+ }
+ const a=document.createElement('a');a.download='storyboard-all.png';a.href=canvas.toDataURL('image/png');a.click();
+};
+load();
+</script>
+</body>
+</html>
